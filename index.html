@@ -546,42 +546,114 @@
 
 <script>
 // ═══════════════════════════════════════
-// DATA
+// KONFIGURASI SUPABASE
 // ═══════════════════════════════════════
-const CATS = {
-  income: [
-    { id:'salary',     label:'Gaji',         icon:'💼' },
-    { id:'freelance',  label:'Freelance',     icon:'💻' },
-    { id:'investment', label:'Investasi',     icon:'📈' },
-    { id:'gift',       label:'Hadiah',        icon:'🎁' },
-    { id:'other_in',   label:'Lainnya',       icon:'✨' },
-  ],
-  expense: [
-    { id:'food',          label:'Makan & Minum', icon:'🍜' },
-    { id:'transport',     label:'Transportasi',  icon:'🚗' },
-    { id:'shopping',      label:'Belanja',        icon:'🛍️' },
-    { id:'health',        label:'Kesehatan',      icon:'💊' },
-    { id:'bills',         label:'Tagihan',        icon:'📄' },
-    { id:'entertainment', label:'Hiburan',        icon:'🎬' },
-    { id:'other_out',     label:'Lainnya',        icon:'📦' },
-  ],
-};
+const SUPABASE_URL = 'URL_SUPABASE_ANDA_DI_SINI';
+const SUPABASE_KEY = 'ANON_KEY_SUPABASE_ANDA_DI_SINI';
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ═══════════════════════════════════════
+// DATA (Ubah menjadi Async)
+// ═══════════════════════════════════════
 let transactions = [];
-let budgets      = {};
-let currentView  = 'dashboard';
-let formType     = 'expense';
-let formCategory = '';
-let filterMode   = 'all';
-let pendingDeleteId = null;
+let budgets = {};
 
-function load() {
-  try { transactions = JSON.parse(localStorage.getItem('fin_txns') || '[]'); } catch { transactions = []; }
-  try { budgets      = JSON.parse(localStorage.getItem('fin_budgets') || '{}'); } catch { budgets = {}; }
+async function load() {
+  // Ambil Transaksi dari Database
+  const { data: txData, error: txErr } = await supabase
+    .from('transactions')
+    .select('*')
+    .order('id', { ascending: false });
+
+  if (!txErr) transactions = txData;
+
+  // Ambil Budget dari Database
+  const { data: bgData, error: bgErr } = await supabase
+    .from('budgets')
+    .select('*');
+
+  if (!bgErr) {
+    budgets = {};
+    bgData.forEach(item => {
+      budgets[item.id] = item.amount;
+    });
+  }
+  
+  // Refresh tampilan setelah data berhasi dimuat
+  renderDashboard();
 }
-function save() {
-  localStorage.setItem('fin_txns',    JSON.stringify(transactions));
-  localStorage.setItem('fin_budgets', JSON.stringify(budgets));
+
+// ═══════════════════════════════════════
+// RE-WRITE FUNGSI TAMBAH (handleAdd)
+// ═══════════════════════════════════════
+async function handleAdd() {
+  const amt = parseAmount(document.getElementById('form-amount').value);
+  if (!amt || !formCategory) { 
+    showToast('Isi nominal & kategori dulu!', 'error'); 
+    return; 
+  }
+
+  const newTx = {
+    type: formType,
+    amount: amt,
+    category: formCategory,
+    note: document.getElementById('form-note').value.trim(),
+    date: document.getElementById('form-date').value || today(),
+  };
+
+  const { error } = await supabase.from('transactions').insert([newTx]);
+
+  if (error) {
+    showToast('Gagal menyimpan ke online', 'error');
+  } else {
+    showToast('Transaksi tersimpan online ✓');
+    await load(); // Refresh data
+    navigate('dashboard');
+  }
+}
+
+// ═══════════════════════════════════════
+// RE-WRITE FUNGSI HAPUS (confirmDelete)
+// ═══════════════════════════════════════
+async function confirmDelete() {
+  const { error } = await supabase
+    .from('transactions')
+    .delete()
+    .eq('id', pendingDeleteId);
+
+  if (!error) {
+    closeModal('modal-delete');
+    showToast('Berhasil dihapus dari cloud');
+    await load();
+    renderHistory();
+  }
+}
+
+// ═══════════════════════════════════════
+// RE-WRITE FUNGSI BUDGET (saveBudgets)
+// ═══════════════════════════════════════
+async function saveBudgets() {
+  const budgetData = [];
+  CATS.expense.forEach(c => {
+    const n = parseAmount(document.getElementById('budget-' + c.id).value);
+    if (n > 0) budgetData.push({ id: c.id, amount: n });
+  });
+
+  // Hapus budget lama, masukkan yang baru (Upsert)
+  const { error } = await supabase.from('budgets').upsert(budgetData);
+
+  if (!error) {
+    showToast('Budget disinkronkan ✓');
+    await load();
+    navigate('dashboard');
+  }
+}
+
+// ═══════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════
+load(); // Panggil fungsi load saat aplikasi dibuka
+navigate('dashboard');
 }
 
 // ═══════════════════════════════════════
